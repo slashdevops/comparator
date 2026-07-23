@@ -1,64 +1,81 @@
-# Comparator Package
+# 🔬 comparator
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/aizon-shared/ds-utils/pkg/comparator.svg)](https://pkg.go.dev/github.com/aizon-shared/ds-utils/pkg/comparator)
+[![main branch](https://github.com/slashdevops/comparator/actions/workflows/main.yml/badge.svg)](https://github.com/slashdevops/comparator/actions/workflows/main.yml)
+![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/slashdevops/comparator?style=plastic)
+[![Go Reference](https://pkg.go.dev/badge/github.com/slashdevops/comparator.svg)](https://pkg.go.dev/github.com/slashdevops/comparator)
+[![Go Report Card](https://goreportcard.com/badge/github.com/slashdevops/comparator)](https://goreportcard.com/report/github.com/slashdevops/comparator)
+[![license](https://img.shields.io/github/license/slashdevops/comparator.svg)](https://github.com/slashdevops/comparator/blob/main/LICENSE)
+[![Release](https://github.com/slashdevops/comparator/actions/workflows/release.yml/badge.svg)](https://github.com/slashdevops/comparator/actions/workflows/release.yml)
 
-The `comparator` package provides advanced comparison and diffing capabilities for Go data structures. It offers a comprehensive solution for deep equality checking and difference detection across any Go values, including primitives, structs, slices, maps, pointers, and complex nested structures.
+`comparator` is a small, dependency-free Go package for **deep comparison** and
+**rich diffing** of arbitrary Go values — primitives, structs, slices, maps,
+pointers, and complex nested structures. It answers two questions: *are these two
+values equal?* and *how exactly do they differ?* — with output ready for
+terminals, web UIs, APIs, and version control.
 
-## Features
+Only the Go standard library is used. There are no third-party dependencies.
 
-### Core Capabilities
+## ✨ Features
 
-- **Deep Recursive Comparison** - Handles complex nested structures with cycle detection
-- **Difference Detection** - Detailed reports of what differs between two values
-- **Multiple Output Formats** - Text, JSON, Markdown, HTML, and Unified Diff
-- **JSON Patch Generation** - RFC 6902 compliant patch documents
-- **Visual Tree Diff** - Hierarchical representation of differences
-- **Custom Comparators** - Register custom comparison logic for specific types
-- **Statistics & Suggestions** - Detailed metrics and actionable recommendations
+- 🔁 **Deep recursive comparison** with cycle detection
+- 🔍 **Difference detection** — detailed, path-addressed reports of what changed
+- 🎨 **Multiple output formats** — text (with ANSI color), JSON, Markdown, HTML
+- 📐 **Unified diff** — Unix `diff`-style output
+- 🩹 **JSON Patch** — RFC 6902 patch documents
+- 🌳 **Visual tree diff** — hierarchical representation for viewers
+- 🧠 **Custom comparators** — register domain-specific equality per type
+- 📊 **Statistics & suggestions** — metrics and actionable hints
+- ⚙️ **Configurable behavior** — float precision, slice-order insensitivity,
+  field ignoring, depth limits, NaN handling, and more
+- 🚫 **Zero third-party dependencies** — standard library only
+- 📄 **Apache-2.0 licensed**
 
-### Configuration Options
-
-- **Float Precision** - Configurable tolerance for floating-point comparisons
-- **Slice Order** - Option to ignore element ordering (treat as sets)
-- **Field Ignoring** - Skip specific struct fields by name
-- **Depth Limiting** - Prevent stack overflow with deeply nested structures
-- **Unexported Fields** - Option to include/exclude private fields
-- **Empty Values** - Treat nil and empty as equal
-- **NaN Handling** - Option to consider NaN values as equal
-- **Colorized Output** - ANSI color-coded terminal output for better readability
-- **Include Equal Values** - Show both differences and matches in reports
-
-## Installation
-
-```bash
-go get github.com/aizon-shared/ds-utils/pkg/comparator
-```
-
-## Update
+## 📦 Installation
 
 ```bash
-go get -u github.com/aizon-shared/ds-utils/pkg/comparator
+go get github.com/slashdevops/comparator
 ```
 
-## Quick Start
+### 🔄 Update
 
-### Simple Equality Check
+Update to the latest available version:
+
+```bash
+go get -u github.com/slashdevops/comparator
+```
+
+## 🧰 Requirements
+
+- Go **1.26** or newer
+- No external Go modules
+
+## 🚀 Quick Start
+
+### Simple equality check
 
 ```go
-import "github.com/aizon-shared/ds-utils/pkg/comparator"
+package main
 
-comp := comparator.New()
-if comp.Equal(obj1, obj2) {
-    fmt.Println("Objects are equal")
-}
+import (
+    "fmt"
 
-// Or use the convenience function
-if comparator.Equal(obj1, obj2) {
-    fmt.Println("Objects are equal")
+    "github.com/slashdevops/comparator"
+)
+
+func main() {
+    comp := comparator.New()
+    if comp.Equal(obj1, obj2) {
+        fmt.Println("objects are equal")
+    }
+
+    // Or use the package-level convenience function:
+    if comparator.Equal(obj1, obj2) {
+        fmt.Println("objects are equal")
+    }
 }
 ```
 
-### Comparison with Options
+### Comparison with options
 
 ```go
 comp := comparator.NewWithOptions(
@@ -68,11 +85,11 @@ comp := comparator.NewWithOptions(
 )
 
 if comp.Equal(user1, user2) {
-    fmt.Println("Users are equal (ignoring ID and timestamps)")
+    fmt.Println("users are equal (ignoring ID and timestamps)")
 }
 ```
 
-### Detailed Difference Analysis
+### Detailed difference analysis
 
 ```go
 diffComp := comparator.NewDiffComparer(
@@ -82,102 +99,16 @@ diffComp := comparator.NewDiffComparer(
 
 result := diffComp.CompareWithDiff(expected, actual)
 if !result.Equal {
-    fmt.Printf("Found %d differences\n", len(result.Differences))
+    fmt.Printf("found %d differences\n", len(result.Differences))
     fmt.Println(result.Summary)
 
     for _, diff := range result.Differences {
         fmt.Printf("[%s] %s: %s\n", diff.Severity, diff.Path, diff.Message)
-        for _, suggestion := range diff.Suggestions {
-            fmt.Printf("  → %s\n", suggestion)
-        }
     }
 }
 ```
 
-## Advanced Features
-
-### Colorized Terminal Output
-
-Enable ANSI color-coded output for better readability in terminals:
-
-```go
-comp := comparator.NewDiffComparer(
-    comparator.WithColorize(true),
-    comparator.WithOutputFormat("text"),
-)
-
-result := comp.CompareWithDiff(config1, config2)
-formatted, _ := comp.FormatDiff(result, "text")
-fmt.Println(formatted) // Displays with colors
-
-// Colors used:
-// - Cyan: Paths and section headers
-// - Green: Expected values and equal fields
-// - Red: Actual values and errors
-// - Yellow: Warnings
-// - Bold: Section headers
-```
-
-**Use Cases:**
-
-- Terminal-based tools and CLI applications
-- Development and debugging sessions
-- Interactive diff viewers
-- CI/CD pipeline outputs
-
-### Include Equal Values
-
-Show both differences and matches in comparison reports:
-
-```go
-comp := comparator.NewDiffComparer(
-    comparator.WithIncludeEqual(true),
-)
-
-result := comp.CompareWithDiff(user1, user2)
-
-// result.Differences now contains both:
-// - Differences (severity: "error")
-// - Equal values (severity: "info", type: "equal")
-
-for _, diff := range result.Differences {
-    if diff.Detail.Type == "equal" {
-        fmt.Printf("✓ %s: values match\n", diff.Path)
-    } else {
-        fmt.Printf("✗ %s: %s\n", diff.Path, diff.Message)
-    }
-}
-```
-
-**Use Cases:**
-
-- Comprehensive audit trails
-- Configuration validation reports
-- Debugging comparison logic
-- Understanding what hasn't changed between versions
-
-### Combined Features
-
-```go
-comp := comparator.NewDiffComparer(
-    comparator.WithColorize(true),
-    comparator.WithIncludeEqual(true),
-    comparator.WithOutputFormat("text"),
-)
-
-result := comp.CompareWithDiff(oldConfig, newConfig)
-formatted, _ := comp.FormatDiff(result, "text")
-
-// Output shows:
-// - Equal fields in green with "info" severity
-// - Different fields in red with "error" severity
-// - All paths highlighted in cyan
-fmt.Println(formatted)
-```
-
-### JSON Patch Generation
-
-Generate RFC 6902 JSON Patch documents:
+### JSON Patch (RFC 6902)
 
 ```go
 patch, err := comparator.GetJSONPatch(oldDoc, newDoc)
@@ -185,200 +116,113 @@ if err != nil {
     log.Fatal(err)
 }
 
-patchJSON, _ := json.MarshalIndent(patch, "", "  ")
-fmt.Println(string(patchJSON))
-// Output:
-// [
-//   {"op": "replace", "path": "/name", "value": "John"},
-//   {"op": "add", "path": "/email", "value": "john@example.com"}
-// ]
+out, _ := json.MarshalIndent(patch, "", "  ")
+fmt.Println(string(out))
 ```
 
-Supported operations:
+## 📖 Documentation
 
-- `add` - Add a new value at a path
-- `remove` - Remove the value at a path
-- `replace` - Replace the value at a path
-- `move` - Move a value from one path to another
-- `copy` - Copy a value from one path to another
-- `test` - Test that a value at a path equals a specified value
+Full documentation lives in the [`docs/`](docs/) folder, and the API reference is
+on [pkg.go.dev](https://pkg.go.dev/github.com/slashdevops/comparator).
 
-### Unified Diff Format
+| Guide | What it covers |
+| ----- | -------------- |
+| 🚀 [Getting Started](docs/getting-started.md) | Installation, first comparison, core types. |
+| ⚙️ [Configuration & Options](docs/configuration.md) | Every option, its default, and when to use it. |
+| 🔍 [Diffing](docs/diffing.md) | `DiffResult`, `Difference`, diff modes. |
+| 🎨 [Output Formats](docs/output-formats.md) | Text/color, JSON, Markdown, HTML, unified, visual. |
+| 🩹 [JSON Patch](docs/json-patch.md) | Generating RFC 6902 patch documents. |
+| 🧠 [Custom Comparators](docs/custom-comparators.md) | Domain-specific equality logic. |
+| ⚡ [Performance](docs/performance.md) | Cost model, benchmarks, tuning. |
+| ❓ [FAQ](docs/faq.md) | Gotchas, thread-safety, common questions. |
 
-Generate Unix diff-style output:
+## 🎛️ Configuration Options
 
-```go
-diffComp := comparator.NewDiffComparer()
-unifiedDiff, err := diffComp.GetUnifiedDiff(oldConfig, newConfig)
-if err != nil {
-    log.Fatal(err)
-}
+| Option | Default | Description |
+| ------ | ------- | ----------- |
+| `WithFloatPrecision(float64)` | `1e-9` | Tolerance for float equality. |
+| `IgnoreSliceOrder()` | `false` | Treat slices as sets (ignore order). |
+| `WithMaxDepth(int)` | `0` (unlimited) | Limit recursion depth. |
+| `IgnoreUnexported()` | `false` | Skip unexported struct fields. |
+| `EquateEmpty()` | `true` | Treat nil and empty containers as equal. |
+| `EquateNaNs()` | `false` | Treat NaN values as equal. |
+| `IgnoreStructFields(...string)` | none | Skip specific struct fields by name. |
+| `WithTimeLayout(string)` | `time.RFC3339Nano` | Layout for rendering `time.Time`. |
+| `WithCustomComparator[T](func(T, T) bool)` | none | Register custom equality for a type. |
+| `WithDiffMode(DiffMode)` | `DiffModeSimple` | Diff detail level. |
+| `WithMaxDiffs(int)` | `1000` | Cap the number of differences collected. |
+| `WithOutputFormat(string)` | `"text"` | `text`, `json`, `markdown`, or `html`. |
+| `WithColorize(bool)` | `false` | ANSI colors in text output. |
+| `WithIncludeEqual(bool)` | `false` | Include equal values in reports. |
 
-fmt.Println(unifiedDiff.Header)
-for _, chunk := range unifiedDiff.Chunks {
-    fmt.Println(chunk.Context)
-    for _, change := range chunk.Changes {
-        symbol := " "
-        if change.Type == "add" {
-            symbol = "+"
-        } else if change.Type == "remove" {
-            symbol = "-"
-        }
-        fmt.Printf("%s%s\n", symbol, change.Content)
-    }
-}
-```
+See [Configuration & Options](docs/configuration.md) for details.
 
-### Visual Tree Diff
+## 🧵 Thread Safety
 
-Generate hierarchical tree representation:
+Comparator instances are **not** thread-safe. Create separate instances for
+concurrent use, or synchronize access with a mutex. The package-level helpers
+build a fresh instance per call and are safe to call concurrently.
 
-```go
-comp := comparator.NewDiffComparer()
-visualDiff, err := comp.GetVisualDiff(obj1, obj2)
-if err != nil {
-    log.Fatal(err)
-}
+## 🧪 Testing
 
-printNode(visualDiff.Root, 0)
-
-func printNode(node *comparator.VisualNode, indent int) {
-    prefix := strings.Repeat("  ", indent)
-    symbol := ""
-    switch node.Status {
-    case "added": symbol = "+ "
-    case "removed": symbol = "- "
-    case "different": symbol = "~ "
-    default: symbol = "  "
-    }
-    fmt.Printf("%s%s%s: %s\n", prefix, symbol, node.Path, node.Value)
-    for _, child := range node.Children {
-        printNode(child, indent+1)
-    }
-}
-```
-
-### Custom Comparators
-
-Register custom comparison logic for specific types:
-
-```go
-type User struct {
-    ID   int
-    Name string
-    Age  int
-}
-
-comp := comparator.NewWithOptions(
-    comparator.WithCustomComparator(func(a, b User) bool {
-        return a.ID == b.ID // Compare users by ID only
-    }),
-)
-
-if comp.Equal(user1, user2) {
-    fmt.Println("Users have the same ID")
-}
-```
-
-## Configuration Options Reference
-
-### Comparison Behavior
-
-- `WithFloatPrecision(float64)`: Set precision threshold for float comparisons. Default: `1e-9`.
-- `IgnoreSliceOrder()`: Treat slices as sets and ignore element order. Default: `false`.
-- `WithMaxDepth(int)`: Limit recursion depth where `0` means unlimited. Default: `0`.
-- `IgnoreUnexported()`: Skip unexported struct fields. Default: `false`.
-- `EquateEmpty()`: Treat nil and empty values as equal. Default: `true`.
-- `EquateNaNs()`: Treat all NaN values as equal. Default: `false`.
-- `IgnoreStructFields(...string)`: Skip specific struct fields by name. Default: none.
-
-### Diff Output
-
-- `WithDiffMode(DiffMode)`: Set diff reporting mode. Default: `DiffModeSimple`.
-- `WithMaxDiffs(int)`: Limit the number of differences collected. Default: `1000`.
-- `WithOutputFormat(string)`: Set output format to `text`, `json`, `markdown`, or `html`. Default: `"text"`.
-- `WithColorize(bool)`: Enable ANSI color codes in text output. Default: `false`.
-- `WithIncludeEqual(bool)`: Include equal values in diff reports. Default: `false`.
-
-### Other
-
-- `WithTimeLayout(string)`: Set the time format used for display. Default: `time.RFC3339Nano`.
-- `WithCustomComparator[T](func(T, T) bool)`: Register a custom comparator for type `T`. Default: none.
-
-## Diff Modes
-
-- **`DiffModeSimple`** - Basic difference reporting
-- **`DiffModeFull`** - Comprehensive details with nested differences
-- **`DiffModeUnified`** - Unix diff-style output
-- **`DiffModeJSONPatch`** - RFC 6902 JSON Patch operations
-- **`DiffModeVisual`** - Tree-based visual representation
-
-## Output Formats
-
-- **`text`** - Plain text with optional ANSI colors
-- **`json`** - JSON representation of diff result
-- **`markdown`** - Markdown-formatted report
-- **`html`** - HTML with styling
-
-## Performance Notes
-
-The package already includes benchmarks for primitive values, structs, deep nesting, large slices, large maps, and diff generation.
-
-- plain equality checks are cheaper than full diff generation
-- large slices are among the more expensive cases, especially when additional diff detail is required
-- reusing comparator instances is preferable when the same configuration is used repeatedly
-- options such as `IgnoreSliceOrder`, `WithIncludeEqual`, and rich output formatting can materially increase work and output size
-
-You can rerun the package benchmarks with:
+Run the test suite:
 
 ```bash
-go test ./pkg/comparator -run '^$' -bench .
+go test ./...
 ```
 
-## Supported Types
-
-The comparator handles all Go types:
-
-- **Primitives**: `bool`, `int*`, `uint*`, `float*`, `complex*`, `string`
-- **Composite**: arrays, slices, maps, structs
-- **Reference**: pointers, interfaces, channels, functions
-- **Special**: `time.Time` (uses native Equal method)
-
-## Performance Considerations
-
-1. **Reuse Comparator Instances** - For repeated comparisons with the same configuration
-2. **Limit Depth** - Use `WithMaxDepth` for deeply nested structures
-3. **Limit Diffs** - Use `WithMaxDiffs` to control memory usage
-4. **Skip Expensive Fields** - Use `IgnoreStructFields` for expensive comparisons
-5. **Avoid IgnoreSliceOrder** - For large slices when possible (use pre-sorted slices)
-
-## Thread Safety
-
-Comparator instances are **not thread-safe**. Create separate instances for concurrent use, or synchronize access with a mutex.
-
-## Error Handling
-
-Most methods return errors for future compatibility. Current implementations rarely return errors, but always check error returns for forward compatibility.
-
-## Examples
-
-See [comparator_examples_test.go](comparator_examples_test.go) for comprehensive examples including:
-
-- String list comparisons
-- JSON structure diffing
-- Configuration validation
-- Colorized output
-- Including equal values
-- Performance testing with large structures
-
-## License
-
-This package is part of the ds-utils project.
-
-## Contributing
-
-Contributions are welcome! Please ensure all tests pass and add appropriate test coverage for new features.
+Run the runnable documentation examples:
 
 ```bash
-make test
+go test -run Example ./...
 ```
+
+Run benchmarks:
+
+```bash
+go test -run '^$' -bench . ./...
+```
+
+Run the same local quality checks used by CI:
+
+```bash
+go fmt ./...
+go vet ./...
+go test -race -coverprofile=/tmp/comparator-coverage.txt -covermode=atomic ./...
+go build ./...
+```
+
+## 🗂️ Project Structure
+
+```text
+.
+|-- .github/                            GitHub Actions, CodeQL, Dependabot, release metadata
+|-- .golangci.yaml                      Optional local golangci-lint configuration
+|-- docs/                               Extensive usage documentation
+|-- doc.go                              Package documentation rendered by pkg.go.dev
+|-- comparator.go                       Public comparison and diffing API
+|-- comparator_test.go                  Unit tests and benchmarks
+|-- comparator_examples_test.go         Executable examples
+|-- comparator_api_examples_test.go     Executable examples
+|-- comparator_options_examples_test.go Executable examples
+|-- go.mod                              Module definition with no external requirements
+|-- LICENSE                             Apache License 2.0
+|-- README.md                           Project overview and usage guide
+`-- SECURITY.md                         Vulnerability reporting policy
+```
+
+## 🔐 Security
+
+Security scanning is handled by GitHub CodeQL. See [SECURITY.md](SECURITY.md) for
+the vulnerability reporting policy.
+
+## 📄 License
+
+`comparator` is licensed under the [Apache License 2.0](LICENSE).
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome at
+[github.com/slashdevops/comparator](https://github.com/slashdevops/comparator).
+Please keep changes small, idiomatic, tested, documented, and dependency-free
+unless there is a clear reason to expand the project scope.
