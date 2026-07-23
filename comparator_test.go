@@ -2,6 +2,7 @@ package comparator
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"strings"
 	"testing"
@@ -1880,7 +1881,7 @@ func TestFormatDiff_AllFormats(t *testing.T) {
 	comp := NewDiffComparer()
 	result := comp.CompareWithDiff(u1, u2)
 
-	formats := []string{"text", "json", "markdown", "html", "unknown"}
+	formats := []string{"text", "json", "markdown", "html"}
 
 	for _, format := range formats {
 		formatted, err := comp.FormatDiff(result, format)
@@ -1907,6 +1908,12 @@ func TestFormatDiff_AllFormats(t *testing.T) {
 				t.Errorf("Expected HTML format to contain HTML tags")
 			}
 		}
+	}
+
+	// An unknown format now returns ErrUnknownFormat instead of silently
+	// falling back to text.
+	if _, err := comp.FormatDiff(result, "unknown"); !errors.Is(err, ErrUnknownFormat) {
+		t.Errorf("Expected ErrUnknownFormat for unknown format, got %v", err)
 	}
 }
 

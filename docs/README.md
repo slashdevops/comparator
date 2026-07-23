@@ -14,8 +14,10 @@ started, read the guides in order; otherwise jump straight to the topic you need
 | [Configuration & Options](configuration.md) | Every functional option, its default, and when to use it. |
 | [Diffing](diffing.md) | `DiffResult`, `Difference`, diff modes, and how to read a diff. |
 | [Output Formats](output-formats.md) | Text (with color), JSON, Markdown, HTML, unified diff, and visual tree. |
-| [JSON Patch](json-patch.md) | Generating RFC 6902 patch documents. |
-| [Custom Comparators](custom-comparators.md) | Registering domain-specific equality logic. |
+| [JSON Patch](json-patch.md) | Generating and applying RFC 6902 patch documents. |
+| [Custom Comparators](custom-comparators.md) | Custom equality, plus the `Equatable`/`Comparable` interfaces. |
+| [Extensibility](extensibility.md) | Generics, streaming reporters, context, and pluggable formatters. |
+| [Testing](testing.md) | `AssertEqual` and friends for use in test suites. |
 | [Performance](performance.md) | Benchmarks, cost model, and tuning tips. |
 | [FAQ](faq.md) | Common questions, gotchas, and thread-safety. |
 

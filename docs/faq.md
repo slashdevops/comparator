@@ -33,16 +33,15 @@ times are *rendered* in diff output.
 
 ## Why do JSON Patch paths use Go field names, not JSON tags?
 
-Paths are derived from the Go structure (e.g. field `Name` → `/Name`). If you
-need JSON-tag names, marshal your inputs to `map[string]any` via `encoding/json`
-before comparing, or rewrite the paths after generation. See
+By default paths are derived from Go field names (e.g. field `Name` → `/Name`).
+Pass `WithFieldNaming(JSONTagNaming)` to use `json` tag names instead, which makes
+the pointers line up with JSON documents and with `ApplyJSONPatch`. See
 [JSON Patch](json-patch.md).
 
 ## Are `nil` and empty slices/maps equal?
 
-By default, **yes** — `EquateEmpty` defaults to `true`. If nil-vs-empty must be a
-difference for your use case, model it with distinct types or values so the
-comparison is unambiguous.
+By default, **yes** — nil/empty equivalence is on. Pass `WithEquateEmpty(false)`
+to make `nil` and empty containers compare as different.
 
 ## Is `NaN` equal to `NaN`?
 

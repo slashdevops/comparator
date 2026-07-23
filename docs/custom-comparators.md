@@ -53,6 +53,35 @@ Both let you loosen equality, but they differ in intent:
 - Use **`WithCustomComparator`** when equality for a type is a genuine domain
   decision that you want to express as code.
 
+## 🧬 Self-describing types: `Equatable` and `Comparable`
+
+A type can also define its own equality without any option, by implementing one
+of the exported interfaces. The engine detects and uses them automatically:
+
+```go
+// Equatable[T]: equal when Equals returns true.
+type Point struct{ X, Y int; Label string }
+
+func (p Point) Equals(other Point) bool { return p.X == other.X && p.Y == other.Y }
+
+// Comparable[T]: equal when CompareTo returns 0.
+type Version struct{ Major int }
+
+func (v Version) CompareTo(other Version) int { return v.Major - other.Major }
+```
+
+```go
+comparator.Equal(Point{1, 2, "a"}, Point{1, 2, "b"}) // true — Label is not part of Equals
+```
+
+Rules:
+
+- The method must have a **value receiver** and the exact signature
+  `Equals(T) bool` or `CompareTo(T) int` for the type's own type `T`.
+- A `WithCustomComparator` registered for the same type **takes precedence** over
+  the type's `Equals`/`CompareTo`.
+- This mirrors how the standard `time.Time` type is compared by its own method.
+
 ## 🧵 A Note on Diffs
 
 Custom comparators answer *equal or not*. When you need a detailed diff and a
