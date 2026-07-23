@@ -1,9 +1,11 @@
 package comparator
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -139,9 +141,14 @@ type Option func(*Config)
 // defaultConfig() or through New/NewWithOptions functions.
 type Config struct {
 	ignoreStructFields map[string]bool
+	ignoreMapKeys      map[string]bool
+	ignorePaths        map[string]bool
+	ignorePathPatterns []*regexp.Regexp
 	customComparators  map[reflect.Type]any
+	reporter           func(Difference)
 	timeLayout         string
 	outputFormat       string
+	fieldNaming        FieldNaming
 	floatPrecision     float64
 	maxDepth           int
 	diffMode           DiffMode
@@ -155,6 +162,21 @@ type Config struct {
 	includeEqual       bool
 	colorize           bool
 }
+
+// FieldNaming selects how struct fields are named in difference paths and in
+// JSON Patch pointers.
+type FieldNaming int
+
+const (
+	// GoFieldNaming uses the Go struct field name (e.g. "Name"). This is the
+	// default and preserves backward compatibility.
+	GoFieldNaming FieldNaming = iota
+
+	// JSONTagNaming uses the name from the field's `json` struct tag when
+	// present, falling back to the Go field name otherwise. This makes JSON
+	// Patch pointers align with the JSON representation of the values.
+	JSONTagNaming
+)
 
 // DiffMode specifies the format and detail level for reporting differences.
 // Different modes are suitable for different use cases, from simple boolean checks
@@ -196,7 +218,10 @@ func defaultConfig() *Config {
 		showContext:        true,
 		contextSize:        3,
 		outputFormat:       "text",
+		fieldNaming:        GoFieldNaming,
 		ignoreStructFields: make(map[string]bool),
+		ignoreMapKeys:      make(map[string]bool),
+		ignorePaths:        make(map[string]bool),
 		customComparators:  make(map[reflect.Type]any),
 	}
 }
@@ -649,10 +674,79 @@ type visit struct {
 type defaultComparator struct {
 	config       *Config
 	visited      map[uintptr]visit
+	ctx          context.Context
 	pathStack    []string
 	differences  []Difference
 	stats        PathStats
 	currentLevel int
+	cancelled    bool
+}
+
+// canceled reports whether an associated context (set via the *Ctx methods) has
+// been canceled. It is cheap enough to call on every recursion step and latches
+// the cancelled flag so callers can surface ctx.Err().
+func (c *defaultComparator) canceled() bool {
+	if c.ctx == nil {
+		return false
+	}
+	if c.ctx.Err() != nil {
+		c.cancelled = true
+		return true
+	}
+	return false
+}
+
+// record appends a difference and notifies the configured reporter, if any.
+// All add*Diff helpers funnel through here so a WithReporter callback observes
+// every difference as it is discovered.
+func (c *defaultComparator) record(diff Difference) {
+	c.differences = append(c.differences, diff)
+	if c.config.reporter != nil {
+		c.config.reporter(diff)
+	}
+}
+
+// fieldName returns the display name for a struct field, honoring the configured
+// FieldNaming. With JSONTagNaming it uses the json tag name when present.
+func (c *defaultComparator) fieldName(field reflect.StructField) string {
+	if c.config.fieldNaming == JSONTagNaming {
+		if tag := field.Tag.Get("json"); tag != "" && tag != "-" {
+			if name, _, _ := strings.Cut(tag, ","); name != "" {
+				return name
+			}
+		}
+	}
+	return field.Name
+}
+
+// skipField reports whether a struct field must be skipped based on the
+// `comparator:"-"` struct tag, the ignore-unexported option, or the
+// ignore-by-name option.
+func (c *defaultComparator) skipField(field reflect.StructField) bool {
+	if c.config.ignoreUnexported && field.PkgPath != "" {
+		return true
+	}
+	if field.Tag.Get("comparator") == "-" {
+		return true
+	}
+	return c.config.ignoreStructFields[field.Name]
+}
+
+// pathIgnored reports whether a canonical field path (e.g. "Address.Zip") is
+// ignored by an exact WithIgnorePaths entry or a WithIgnorePathPatterns regexp.
+func (c *defaultComparator) pathIgnored(canonical string) bool {
+	if canonical == "" {
+		return false
+	}
+	if c.config.ignorePaths[canonical] {
+		return true
+	}
+	for _, re := range c.config.ignorePathPatterns {
+		if re.MatchString(canonical) {
+			return true
+		}
+	}
+	return false
 }
 
 // New creates a new Comparator with default configuration.
@@ -859,52 +953,160 @@ func (c *defaultComparator) CompareWithDiff(a, b any) *DiffResult {
 //	    }
 //	}
 func (c *defaultComparator) GetUnifiedDiff(a, b any) (*UnifiedDiff, error) {
-	aStr := fmt.Sprintf("%+v", a)
-	bStr := fmt.Sprintf("%+v", b)
-
-	aLines := strings.Split(aStr, "\n")
-	bLines := strings.Split(bStr, "\n")
-
-	chunks := make([]Chunk, 0)
-	changes := make([]Change, 0)
+	aLines := strings.Split(fmt.Sprintf("%+v", a), "\n")
+	bLines := strings.Split(fmt.Sprintf("%+v", b), "\n")
 
 	contextSize := c.config.contextSize
-	if contextSize <= 0 {
+	if contextSize < 0 {
 		contextSize = 3
 	}
-	_ = contextSize // contextSize will be used for context lines in future implementation
-
-	for i := 0; i < min(len(aLines), len(bLines)); i++ {
-		if aLines[i] != bLines[i] {
-			changes = append(changes, Change{
-				Type:    "removed",
-				Content: "- " + aLines[i],
-				Line:    i + 1,
-			}, Change{
-				Type:    "added",
-				Content: "+ " + bLines[i],
-				Line:    i + 1,
-			})
-		} else if c.config.showContext && len(changes) > 0 {
-			changes = append(changes, Change{
-				Type:    "context",
-				Content: "  " + aLines[i],
-				Line:    i + 1,
-			})
-		}
+	if !c.config.showContext {
+		contextSize = 0
 	}
 
-	if len(changes) > 0 {
-		chunks = append(chunks, Chunk{
-			Context: fmt.Sprintf("@@ -1,%d +1,%d @@", len(aLines), len(bLines)),
-			Changes: changes,
-		})
-	}
+	ops := lineDiffOps(aLines, bLines)
+	chunks := buildHunks(ops, contextSize)
 
 	return &UnifiedDiff{
 		Header: "--- a\n+++ b\n",
 		Chunks: chunks,
 	}, nil
+}
+
+// diffOp is a single line-level operation produced by lineDiffOps.
+type diffOp struct {
+	typ     string // "context", "remove", or "add"
+	content string
+	aLine   int // 1-based line number in the first input (context/remove)
+	bLine   int // 1-based line number in the second input (context/add)
+}
+
+// lineDiffOps computes a longest-common-subsequence line diff between a and b,
+// returning an ordered list of context/remove/add operations.
+func lineDiffOps(a, b []string) []diffOp {
+	n, m := len(a), len(b)
+
+	lcs := make([][]int, n+1)
+	for i := range lcs {
+		lcs[i] = make([]int, m+1)
+	}
+	for i := n - 1; i >= 0; i-- {
+		for j := m - 1; j >= 0; j-- {
+			if a[i] == b[j] {
+				lcs[i][j] = lcs[i+1][j+1] + 1
+			} else if lcs[i+1][j] >= lcs[i][j+1] {
+				lcs[i][j] = lcs[i+1][j]
+			} else {
+				lcs[i][j] = lcs[i][j+1]
+			}
+		}
+	}
+
+	ops := make([]diffOp, 0, n+m)
+	i, j := 0, 0
+	for i < n && j < m {
+		switch {
+		case a[i] == b[j]:
+			ops = append(ops, diffOp{typ: "context", content: a[i], aLine: i + 1, bLine: j + 1})
+			i++
+			j++
+		case lcs[i+1][j] >= lcs[i][j+1]:
+			ops = append(ops, diffOp{typ: "remove", content: a[i], aLine: i + 1})
+			i++
+		default:
+			ops = append(ops, diffOp{typ: "add", content: b[j], bLine: j + 1})
+			j++
+		}
+	}
+	for ; i < n; i++ {
+		ops = append(ops, diffOp{typ: "remove", content: a[i], aLine: i + 1})
+	}
+	for ; j < m; j++ {
+		ops = append(ops, diffOp{typ: "add", content: b[j], bLine: j + 1})
+	}
+	return ops
+}
+
+// buildHunks groups diff operations into hunks, keeping at most contextSize
+// unchanged context lines around each run of changes and collapsing larger
+// unchanged gaps. An input with no changes yields no hunks.
+func buildHunks(ops []diffOp, contextSize int) []Chunk {
+	n := len(ops)
+	keep := make([]bool, n)
+	changed := false
+	for idx, op := range ops {
+		if op.typ == "context" {
+			continue
+		}
+		changed = true
+		lo := max(idx-contextSize, 0)
+		hi := min(idx+contextSize, n-1)
+		for t := lo; t <= hi; t++ {
+			keep[t] = true
+		}
+	}
+	if !changed {
+		return []Chunk{}
+	}
+
+	chunks := make([]Chunk, 0)
+	for i := 0; i < n; {
+		if !keep[i] {
+			i++
+			continue
+		}
+		start := i
+		for i < n && keep[i] {
+			i++
+		}
+		chunks = append(chunks, makeChunk(ops[start:i]))
+	}
+	return chunks
+}
+
+// makeChunk renders a group of operations into a Chunk with a unified-diff hunk
+// header (@@ -aStart,aLen +bStart,bLen @@).
+func makeChunk(ops []diffOp) Chunk {
+	changes := make([]Change, 0, len(ops))
+	var aStart, bStart, aCount, bCount int
+
+	for _, op := range ops {
+		switch op.typ {
+		case "context":
+			if aStart == 0 {
+				aStart = op.aLine
+			}
+			if bStart == 0 {
+				bStart = op.bLine
+			}
+			aCount++
+			bCount++
+			changes = append(changes, Change{Type: "context", Content: "  " + op.content, Line: op.aLine})
+		case "remove":
+			if aStart == 0 {
+				aStart = op.aLine
+			}
+			aCount++
+			changes = append(changes, Change{Type: "remove", Content: "- " + op.content, Line: op.aLine})
+		case "add":
+			if bStart == 0 {
+				bStart = op.bLine
+			}
+			bCount++
+			changes = append(changes, Change{Type: "add", Content: "+ " + op.content, Line: op.bLine})
+		}
+	}
+	if aStart == 0 {
+		aStart = 1
+	}
+	if bStart == 0 {
+		bStart = 1
+	}
+
+	return Chunk{
+		Context: fmt.Sprintf("@@ -%d,%d +%d,%d @@", aStart, aCount, bStart, bCount),
+		Changes: changes,
+	}
 }
 
 // GetJSONPatch generates a JSON Patch (RFC 6902) document describing the differences.
@@ -1031,9 +1233,13 @@ func (c *defaultComparator) FormatDiff(result *DiffResult, format string) (strin
 		return c.formatMarkdownDiff(result), nil
 	case "html":
 		return c.formatHTMLDiff(result), nil
-	default:
-		return c.formatTextDiff(result), nil
 	}
+
+	if fn, ok := lookupFormatter(format); ok {
+		return fn(result)
+	}
+
+	return "", fmt.Errorf("%w: %q", ErrUnknownFormat, format)
 }
 
 // ==================== Internal Methods ====================
@@ -1044,11 +1250,16 @@ func (c *defaultComparator) resetState() {
 	c.currentLevel = 0
 	c.stats = PathStats{}
 	c.differences = make([]Difference, 0)
+	c.cancelled = false
 }
 
 func (c *defaultComparator) equal(av, bv reflect.Value, path []string) bool {
 	if path == nil {
 		c.visited = make(map[uintptr]visit)
+	}
+
+	if c.canceled() {
+		return false
 	}
 
 	if c.config.maxDepth > 0 && len(path) >= c.config.maxDepth {
@@ -1068,6 +1279,12 @@ func (c *defaultComparator) equal(av, bv reflect.Value, path []string) bool {
 
 	if comparator, ok := c.config.customComparators[av.Type()]; ok {
 		return c.useCustomComparator(av, bv, comparator)
+	}
+
+	if av.Type() == bv.Type() {
+		if result, ok := c.userEquality(av, bv); ok {
+			return result
+		}
 	}
 
 	if av.Type() != bv.Type() {
@@ -1202,10 +1419,6 @@ func (c *defaultComparator) equalSortedSlices(av, bv reflect.Value, path []strin
 }
 
 func (c *defaultComparator) equalMaps(av, bv reflect.Value, path []string) bool {
-	if av.Len() != bv.Len() {
-		return false
-	}
-
 	if av.IsNil() || bv.IsNil() {
 		if c.config.equateEmpty {
 			return (av.IsNil() || av.Len() == 0) && (bv.IsNil() || bv.Len() == 0)
@@ -1213,7 +1426,15 @@ func (c *defaultComparator) equalMaps(av, bv reflect.Value, path []string) bool 
 		return av.IsNil() == bv.IsNil()
 	}
 
+	hasIgnored := len(c.config.ignoreMapKeys) > 0
+	if !hasIgnored && av.Len() != bv.Len() {
+		return false
+	}
+
 	for _, key := range av.MapKeys() {
+		if c.mapKeyIgnored(key) {
+			continue
+		}
 		bVal := bv.MapIndex(key)
 		if !bVal.IsValid() {
 			return false
@@ -1224,7 +1445,27 @@ func (c *defaultComparator) equalMaps(av, bv reflect.Value, path []string) bool 
 			return false
 		}
 	}
+
+	if hasIgnored {
+		for _, key := range bv.MapKeys() {
+			if c.mapKeyIgnored(key) {
+				continue
+			}
+			if !av.MapIndex(key).IsValid() {
+				return false
+			}
+		}
+	}
 	return true
+}
+
+// mapKeyIgnored reports whether a map key is excluded via WithIgnoreMapKeys.
+// Keys are matched by their default string representation.
+func (c *defaultComparator) mapKeyIgnored(key reflect.Value) bool {
+	if len(c.config.ignoreMapKeys) == 0 {
+		return false
+	}
+	return c.config.ignoreMapKeys[fmt.Sprintf("%v", key.Interface())]
 }
 
 func (c *defaultComparator) equalStructs(av, bv reflect.Value, path []string) bool {
@@ -1235,20 +1476,38 @@ func (c *defaultComparator) equalStructs(av, bv reflect.Value, path []string) bo
 	for i := 0; i < av.NumField(); i++ {
 		field := av.Type().Field(i)
 
-		if c.config.ignoreUnexported && field.PkgPath != "" {
+		if c.skipField(field) {
 			continue
 		}
 
-		if c.config.ignoreStructFields[field.Name] {
+		name := c.fieldName(field)
+		newPath := append(path, name)
+		if c.pathIgnored(canonicalPath(newPath)) {
 			continue
 		}
-
-		newPath := append(path, field.Name)
 		if !c.equal(av.Field(i), bv.Field(i), newPath) {
 			return false
 		}
 	}
 	return true
+}
+
+// canonicalPath renders path segments as a dotted path with bracketed index or
+// key segments kept inline, e.g. ["A", "B", "[0]", "C"] -> "A.B[0].C". It is the
+// canonical form matched against WithIgnorePaths / WithIgnorePathPatterns.
+func canonicalPath(segments []string) string {
+	var b strings.Builder
+	for _, s := range segments {
+		if strings.HasPrefix(s, "[") {
+			b.WriteString(s)
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(s)
+	}
+	return b.String()
 }
 
 func (c *defaultComparator) equalPointers(av, bv reflect.Value, path []string) bool {
@@ -1364,6 +1623,43 @@ func (c *defaultComparator) useCustomComparator(av, bv reflect.Value, comparator
 	return result[0].Bool()
 }
 
+// boolType and intType are reused when validating user-defined equality methods.
+var (
+	boolType = reflect.TypeFor[bool]()
+	intType  = reflect.TypeFor[int]()
+)
+
+// userEquality honors the exported Equatable[T] and Comparable[T] interfaces.
+// If av's type implements Equals(T) bool or CompareTo(T) int for its own type,
+// that method decides equality. The second return value reports whether such a
+// method was found and used.
+//
+// Custom comparators registered with WithCustomComparator take precedence and
+// are checked before this method.
+func (c *defaultComparator) userEquality(av, bv reflect.Value) (bool, bool) {
+	if !av.CanInterface() || !bv.CanInterface() {
+		return false, false
+	}
+
+	typ := av.Type()
+
+	if m, ok := typ.MethodByName("Equals"); ok &&
+		m.Type.NumIn() == 2 && m.Type.NumOut() == 1 &&
+		m.Type.In(1) == typ && m.Type.Out(0) == boolType {
+		out := av.MethodByName("Equals").Call([]reflect.Value{bv})
+		return out[0].Bool(), true
+	}
+
+	if m, ok := typ.MethodByName("CompareTo"); ok &&
+		m.Type.NumIn() == 2 && m.Type.NumOut() == 1 &&
+		m.Type.In(1) == typ && m.Type.Out(0) == intType {
+		out := av.MethodByName("CompareTo").Call([]reflect.Value{bv})
+		return out[0].Int() == 0, true
+	}
+
+	return false, false
+}
+
 func (c *defaultComparator) isSimpleType(typ reflect.Type) bool {
 	switch typ.Kind() {
 	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
@@ -1387,6 +1683,10 @@ func (c *defaultComparator) shallowEqual(av, bv reflect.Value) bool {
 
 func (c *defaultComparator) collectDifferences(av, bv reflect.Value, currentPath string) {
 	if c.config.maxDiffs > 0 && len(c.differences) >= c.config.maxDiffs {
+		return
+	}
+
+	if c.canceled() {
 		return
 	}
 
@@ -1578,12 +1878,16 @@ func (c *defaultComparator) compareSlicesIgnoreOrder(av, bv reflect.Value, path 
 }
 
 func (c *defaultComparator) compareMaps(av, bv reflect.Value, path string) {
-	if av.Len() != bv.Len() {
+	if c.effectiveMapLen(av) != c.effectiveMapLen(bv) {
 		c.addLengthDiff(av, bv, path)
 		c.stats.DifferentNodes++
 	}
 
 	for _, key := range av.MapKeys() {
+		if c.mapKeyIgnored(key) {
+			c.stats.IgnoredNodes++
+			continue
+		}
 		keyStr := fmt.Sprintf("%v", key.Interface())
 		elementPath := fmt.Sprintf("%s[%s]", path, keyStr)
 
@@ -1597,12 +1901,29 @@ func (c *defaultComparator) compareMaps(av, bv reflect.Value, path string) {
 	}
 
 	for _, key := range bv.MapKeys() {
+		if c.mapKeyIgnored(key) {
+			continue
+		}
 		if !av.MapIndex(key).IsValid() {
 			keyStr := fmt.Sprintf("%v", key.Interface())
 			elementPath := fmt.Sprintf("%s[%s]", path, keyStr)
 			c.addExtraKeyDiff(bv.MapIndex(key), elementPath, "extra key in second map")
 		}
 	}
+}
+
+// effectiveMapLen counts map entries excluding any ignored keys.
+func (c *defaultComparator) effectiveMapLen(m reflect.Value) int {
+	if len(c.config.ignoreMapKeys) == 0 {
+		return m.Len()
+	}
+	n := 0
+	for _, key := range m.MapKeys() {
+		if !c.mapKeyIgnored(key) {
+			n++
+		}
+	}
+	return n
 }
 
 func (c *defaultComparator) compareStructs(av, bv reflect.Value, path string) {
@@ -1616,19 +1937,18 @@ func (c *defaultComparator) compareStructs(av, bv reflect.Value, path string) {
 
 	for i := 0; i < av.NumField(); i++ {
 		field := av.Type().Field(i)
-		fieldName := field.Name
 
-		if c.config.ignoreUnexported && field.PkgPath != "" {
+		if c.skipField(field) {
 			c.stats.IgnoredNodes++
 			continue
 		}
 
-		if c.config.ignoreStructFields[fieldName] {
+		name := c.fieldName(field)
+		fieldPath := path + "." + name
+		if c.pathIgnored(strings.TrimPrefix(fieldPath, ".")) {
 			c.stats.IgnoredNodes++
 			continue
 		}
-
-		fieldPath := path + "." + fieldName
 		c.collectDifferences(av.Field(i), bv.Field(i), fieldPath)
 	}
 }
@@ -1650,7 +1970,7 @@ func (c *defaultComparator) comparePointers(av, bv reflect.Value, path string) {
 // ==================== Diff Creation Helpers ====================
 
 func (c *defaultComparator) addValueDiff(av, bv reflect.Value, path, message string) {
-	c.differences = append(c.differences, Difference{
+	c.record(Difference{
 		Path:     path,
 		Level:    c.currentLevel,
 		Message:  message,
@@ -1671,7 +1991,7 @@ func (c *defaultComparator) addEqualDiff(av, bv reflect.Value, path, message str
 		return
 	}
 
-	c.differences = append(c.differences, Difference{
+	c.record(Difference{
 		Path:     path,
 		Level:    c.currentLevel,
 		Message:  message,
@@ -1687,7 +2007,7 @@ func (c *defaultComparator) addEqualDiff(av, bv reflect.Value, path, message str
 }
 
 func (c *defaultComparator) addTypeMismatchDiff(av, bv reflect.Value, path string) {
-	c.differences = append(c.differences, Difference{
+	c.record(Difference{
 		Path:     path,
 		Level:    c.currentLevel,
 		Message:  fmt.Sprintf("type mismatch: %s vs %s", av.Type(), bv.Type()),
@@ -1717,7 +2037,7 @@ func (c *defaultComparator) addMissingDiff(av, bv reflect.Value, path string) {
 		message = "value missing in first structure"
 	}
 
-	c.differences = append(c.differences, Difference{
+	c.record(Difference{
 		Path:     path,
 		Level:    c.currentLevel,
 		Message:  message,
@@ -1731,7 +2051,7 @@ func (c *defaultComparator) addMissingDiff(av, bv reflect.Value, path string) {
 }
 
 func (c *defaultComparator) addLengthDiff(av, bv reflect.Value, path string) {
-	c.differences = append(c.differences, Difference{
+	c.record(Difference{
 		Path:     path,
 		Level:    c.currentLevel,
 		Message:  fmt.Sprintf("length mismatch: %d vs %d", av.Len(), bv.Len()),
@@ -1749,7 +2069,7 @@ func (c *defaultComparator) addLengthDiff(av, bv reflect.Value, path string) {
 }
 
 func (c *defaultComparator) addExtraElementDiff(v reflect.Value, path, message string) {
-	c.differences = append(c.differences, Difference{
+	c.record(Difference{
 		Path:     path,
 		Level:    c.currentLevel,
 		Message:  message,
@@ -1762,7 +2082,7 @@ func (c *defaultComparator) addExtraElementDiff(v reflect.Value, path, message s
 }
 
 func (c *defaultComparator) addMissingElementDiff(v reflect.Value, path, message string) {
-	c.differences = append(c.differences, Difference{
+	c.record(Difference{
 		Path:     path,
 		Level:    c.currentLevel,
 		Message:  message,
@@ -1775,7 +2095,7 @@ func (c *defaultComparator) addMissingElementDiff(v reflect.Value, path, message
 }
 
 func (c *defaultComparator) addMissingKeyDiff(v reflect.Value, path, message string) {
-	c.differences = append(c.differences, Difference{
+	c.record(Difference{
 		Path:     path,
 		Level:    c.currentLevel,
 		Message:  message,
@@ -1788,7 +2108,7 @@ func (c *defaultComparator) addMissingKeyDiff(v reflect.Value, path, message str
 }
 
 func (c *defaultComparator) addExtraKeyDiff(v reflect.Value, path, message string) {
-	c.differences = append(c.differences, Difference{
+	c.record(Difference{
 		Path:     path,
 		Level:    c.currentLevel,
 		Message:  message,
@@ -1814,7 +2134,7 @@ func (c *defaultComparator) addNilDiff(av, bv reflect.Value, path string) {
 		message = "expected value, got nil"
 	}
 
-	c.differences = append(c.differences, Difference{
+	c.record(Difference{
 		Path:     path,
 		Level:    c.currentLevel,
 		Message:  message,
