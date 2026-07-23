@@ -48,20 +48,52 @@ type JSONPatchOperation struct {
 
 ## 🧭 Path Format
 
-Paths are [JSON Pointers](https://datatracker.ietf.org/doc/html/rfc6901). Struct
-fields appear by their **Go field name** (e.g. a field `Name` produces `/Name`),
-and nested paths are slash-separated (e.g. `/Server/Port`).
+Paths are [JSON Pointers](https://datatracker.ietf.org/doc/html/rfc6901). By
+default, struct fields appear by their **Go field name** (e.g. a field `Name`
+produces `/Name`), and nested paths are slash-separated (e.g. `/Server/Port`).
 
-> 🔎 If you need the JSON-tag name instead of the Go field name in the pointer,
-> transform the paths after generation, or marshal your inputs to
-> `map[string]any` (via `encoding/json`) before comparing.
+To make pointers line up with the JSON representation of your values, generate
+the patch with `WithFieldNaming(JSONTagNaming)`:
+
+```go
+type Profile struct {
+    FullName string `json:"full_name"`
+}
+
+patch, _ := comparator.GetJSONPatch(
+    Profile{FullName: "Jon"},
+    Profile{FullName: "John"},
+    comparator.WithFieldNaming(comparator.JSONTagNaming),
+)
+// patch[0].Path == "/full_name"
+```
 
 ## 🛠️ Applying a Patch
 
-This package **generates** patches; it does not apply them. To apply a patch,
-marshal it to JSON and use any RFC 6902-compliant applier, or interpret the
-operations yourself. Because the type has standard JSON tags, it round-trips
-cleanly through `encoding/json`.
+`ApplyJSONPatch` applies a patch and returns the modified document. It supports
+`add`, `remove`, `replace`, `move`, `copy`, and `test`:
+
+```go
+doc := map[string]any{"name": "Jon"}
+patch := []comparator.JSONPatchOperation{
+    {Op: "replace", Path: "/name", Value: "John"},
+    {Op: "add", Path: "/email", Value: "john@example.com"},
+}
+
+updated, err := comparator.ApplyJSONPatch(doc, patch)
+if err != nil {
+    // errors wrap comparator.ErrInvalidPatch (including a failed "test" op)
+    log.Fatal(err)
+}
+```
+
+The document is normalized to JSON values (objects → `map[string]any`, arrays →
+`[]any`) by round-tripping through `encoding/json`, so it must be
+JSON-serializable. For a clean generate-then-apply round trip, generate the patch
+with `JSONTagNaming` so its pointers match the object keys.
+
+A failed `test` operation, an unreachable path, or an unsupported op returns an
+error wrapping `ErrInvalidPatch`.
 
 ## ➡️ Next Steps
 

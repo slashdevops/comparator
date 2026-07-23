@@ -31,14 +31,30 @@ comp := comparator.NewWithOptions(
 | `IgnoreSliceOrder()` | `false` | Treat slices/arrays as sets; element order is ignored. |
 | `WithMaxDepth(int)` | `0` (unlimited) | Stop recursing beyond this depth; guards against very deep structures. |
 | `IgnoreUnexported()` | `false` | Skip unexported struct fields entirely. |
-| `EquateEmpty()` | `true` | Treat `nil` and empty containers (slice/map) as equal. |
+| `EquateEmpty()` | `true` | Treat `nil` and empty containers (slice/map) as equal. Enable-only; prefer `WithEquateEmpty`. |
+| `WithEquateEmpty(bool)` | `true` | Toggle nil/empty equivalence in **both** directions (pass `false` to make them differ). |
 | `EquateNaNs()` | `false` | Treat `NaN == NaN` as `true` (IEEE-754 says `false`). |
 | `IgnoreStructFields(...string)` | none | Skip struct fields by name, at any nesting level. |
 | `WithTimeLayout(string)` | `time.RFC3339Nano` | Layout used to render `time.Time` in diff output. Equality still uses `time.Time.Equal`. |
 
-> ℹ️ `EquateEmpty` defaults to **true** in this package. Pass it explicitly if
-> you want to document the intent; there is currently no dedicated option to turn
-> it back off, so rely on strict typing when nil-vs-empty must differ.
+### Ignoring fields, paths, and keys
+
+| Option | Description |
+| ------ | ----------- |
+| `IgnoreStructFields(...string)` | Skip struct fields by **name**, anywhere they appear. |
+| `WithIgnorePaths(...string)` | Skip struct fields at exact canonical paths, e.g. `"Meta.UpdatedAt"`. |
+| `WithIgnorePathPatterns(...string)` | Skip struct fields whose canonical path matches a regular expression. |
+| `WithIgnoreMapKeys(...string)` | Skip map entries by key (matched by string form), anywhere they appear. |
+| struct tag `comparator:"-"` | Fields tagged this way are always skipped — the type describes its own exclusions. |
+
+Canonical paths use dotted field names with bracketed index/key segments inline
+(the same form reported in `Difference.Path`), e.g. `User.Aliases[0]`.
+
+### Field naming
+
+| Option | Default | Description |
+| ------ | ------- | ----------- |
+| `WithFieldNaming(FieldNaming)` | `GoFieldNaming` | `GoFieldNaming` uses Go field names; `JSONTagNaming` uses `json` tag names in paths and JSON Patch pointers. |
 
 ## 🧾 Diff Output
 
@@ -65,6 +81,10 @@ comp := comparator.NewWithOptions(
 | Option | Description |
 | ------ | ----------- |
 | `WithCustomComparator[T](func(a, b T) bool)` | Register domain-specific equality for a concrete type `T`. See [Custom Comparators](custom-comparators.md). |
+| `WithReporter(func(Difference))` | Stream each difference to a callback as it is discovered. See [Extensibility](extensibility.md). |
+
+The output format set is also extensible via `RegisterFormatter` — see
+[Extensibility](extensibility.md).
 
 ## 🎛️ Putting It Together
 

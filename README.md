@@ -21,12 +21,17 @@ Only the Go standard library is used. There are no third-party dependencies.
 - 🔍 **Difference detection** — detailed, path-addressed reports of what changed
 - 🎨 **Multiple output formats** — text (with ANSI color), JSON, Markdown, HTML
 - 📐 **Unified diff** — Unix `diff`-style output
-- 🩹 **JSON Patch** — RFC 6902 patch documents
+- 🩹 **JSON Patch** — generate *and apply* RFC 6902 patch documents
 - 🌳 **Visual tree diff** — hierarchical representation for viewers
-- 🧠 **Custom comparators** — register domain-specific equality per type
-- 📊 **Statistics & suggestions** — metrics and actionable hints
+- 🧠 **Custom equality** — per-type comparators plus auto-detected
+  `Equatable`/`Comparable` interfaces
+- 🔤 **Type-safe generics** — `EqualT[T]`, `DiffT[T]`, and friends
+- ⏱️ **Context-aware** — cancel or bound long comparisons with `context.Context`
+- 📡 **Streaming reporter** — observe each difference as it is found
+- 🎨 **Pluggable formatters** — register custom output formats (CSV, JUnit, …)
+- 🧪 **Testing helpers** — `AssertEqual` / `RequireEqual` for test suites
 - ⚙️ **Configurable behavior** — float precision, slice-order insensitivity,
-  field ignoring, depth limits, NaN handling, and more
+  field/path/map-key ignoring, depth limits, NaN handling, and more
 - 🚫 **Zero third-party dependencies** — standard library only
 - 📄 **Apache-2.0 licensed**
 
@@ -131,8 +136,10 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/slashdevops/comparator).
 | ⚙️ [Configuration & Options](docs/configuration.md) | Every option, its default, and when to use it. |
 | 🔍 [Diffing](docs/diffing.md) | `DiffResult`, `Difference`, diff modes. |
 | 🎨 [Output Formats](docs/output-formats.md) | Text/color, JSON, Markdown, HTML, unified, visual. |
-| 🩹 [JSON Patch](docs/json-patch.md) | Generating RFC 6902 patch documents. |
-| 🧠 [Custom Comparators](docs/custom-comparators.md) | Domain-specific equality logic. |
+| 🩹 [JSON Patch](docs/json-patch.md) | Generating and applying RFC 6902 patches. |
+| 🧠 [Custom Comparators](docs/custom-comparators.md) | Custom equality + `Equatable`/`Comparable`. |
+| 🧩 [Extensibility](docs/extensibility.md) | Generics, reporters, context, pluggable formatters. |
+| 🧪 [Testing](docs/testing.md) | `AssertEqual` and friends for test suites. |
 | ⚡ [Performance](docs/performance.md) | Cost model, benchmarks, tuning. |
 | ❓ [FAQ](docs/faq.md) | Gotchas, thread-safety, common questions. |
 
@@ -144,16 +151,25 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/slashdevops/comparator).
 | `IgnoreSliceOrder()` | `false` | Treat slices as sets (ignore order). |
 | `WithMaxDepth(int)` | `0` (unlimited) | Limit recursion depth. |
 | `IgnoreUnexported()` | `false` | Skip unexported struct fields. |
-| `EquateEmpty()` | `true` | Treat nil and empty containers as equal. |
+| `WithEquateEmpty(bool)` | `true` | Toggle nil/empty-container equivalence (both directions). |
 | `EquateNaNs()` | `false` | Treat NaN values as equal. |
 | `IgnoreStructFields(...string)` | none | Skip specific struct fields by name. |
+| `WithIgnorePaths(...string)` | none | Skip struct fields at exact canonical paths. |
+| `WithIgnorePathPatterns(...string)` | none | Skip struct fields whose path matches a regexp. |
+| `WithIgnoreMapKeys(...string)` | none | Skip map entries by key. |
+| `WithFieldNaming(FieldNaming)` | `GoFieldNaming` | Use Go field names or `json` tag names in paths/pointers. |
 | `WithTimeLayout(string)` | `time.RFC3339Nano` | Layout for rendering `time.Time`. |
 | `WithCustomComparator[T](func(T, T) bool)` | none | Register custom equality for a type. |
+| `WithReporter(func(Difference))` | none | Stream each difference to a callback. |
 | `WithDiffMode(DiffMode)` | `DiffModeSimple` | Diff detail level. |
 | `WithMaxDiffs(int)` | `1000` | Cap the number of differences collected. |
-| `WithOutputFormat(string)` | `"text"` | `text`, `json`, `markdown`, or `html`. |
+| `WithOutputFormat(string)` | `"text"` | `text`, `json`, `markdown`, `html`, or a registered format. |
 | `WithColorize(bool)` | `false` | ANSI colors in text output. |
 | `WithIncludeEqual(bool)` | `false` | Include equal values in reports. |
+
+Struct fields tagged `comparator:"-"` are always skipped. See
+[Configuration & Options](docs/configuration.md) and
+[Extensibility](docs/extensibility.md) for the full set.
 
 See [Configuration & Options](docs/configuration.md) for details.
 
@@ -199,12 +215,19 @@ go build ./...
 |-- .github/                            GitHub Actions, CodeQL, Dependabot, release metadata
 |-- .golangci.yaml                      Optional local golangci-lint configuration
 |-- docs/                               Extensive usage documentation
+|-- AGENTS.md                           AI assistant guidance (symlink to copilot-instructions)
 |-- doc.go                              Package documentation rendered by pkg.go.dev
-|-- comparator.go                       Public comparison and diffing API
-|-- comparator_test.go                  Unit tests and benchmarks
-|-- comparator_examples_test.go         Executable examples
-|-- comparator_api_examples_test.go     Executable examples
-|-- comparator_options_examples_test.go Executable examples
+|-- comparator.go                       Core comparison and diffing engine
+|-- errors.go                           Sentinel errors
+|-- generics.go                         Type-safe generic API (EqualT, DiffT, ...)
+|-- context.go                          Context-aware comparison
+|-- patch.go                            ApplyJSONPatch (RFC 6902 applier)
+|-- formatters.go                       Pluggable output formatter registry
+|-- options_ext.go                      Additional functional options
+|-- stringer.go                         String() helpers for diff types
+|-- assert.go                           Testing helpers (AssertEqual, ...)
+|-- *_test.go                           Unit tests and benchmarks
+|-- *_examples_test.go                  Executable examples
 |-- go.mod                              Module definition with no external requirements
 |-- LICENSE                             Apache License 2.0
 |-- README.md                           Project overview and usage guide
