@@ -1,0 +1,17 @@
+{
+  "cSpell.words": [
+    "betteralign",
+    "Equatable",
+    "Errorf",
+    "gofmt",
+    "nolint",
+    "slashdevops"
+  ],
+  "chat.tools.terminal.autoApprove": {
+    "gofmt": true,
+    "go test": true,
+    "go vet": true,
+    "go build": true,
+    "actionlint": true
+  }
+}
