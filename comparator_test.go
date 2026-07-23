@@ -6,11 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/aizon-shared/ds-utils/pkg/testutils"
 )
-
-var testCredGen = testutils.NewTestCredentialGenerator("comparator-tests")
 
 // ==================== Basic Equality Tests ====================
 
@@ -363,8 +359,7 @@ func BenchmarkEqual_Primitives(b *testing.B) {
 	a := 42
 	c := 42
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		comp.Equal(a, c)
 	}
 }
@@ -379,8 +374,7 @@ func BenchmarkEqual_Structs(b *testing.B) {
 	p1 := Person{Name: "Alice", Age: 30}
 	p2 := Person{Name: "Alice", Age: 30}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		comp.Equal(p1, p2)
 	}
 }
@@ -395,8 +389,7 @@ func BenchmarkCompareWithDiff(b *testing.B) {
 	cfg1 := Config{Host: "localhost", Port: 8080}
 	cfg2 := Config{Host: "localhost", Port: 9090}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		comp.CompareWithDiff(cfg1, cfg2)
 	}
 }
@@ -622,8 +615,10 @@ func TestIgnoreUnexported(t *testing.T) {
 
 	comp := NewWithOptions(IgnoreUnexported())
 
-	u1 := User{Name: "Alice", password: testCredGen.Secret(1)}
-	u2 := User{Name: "Alice", password: testCredGen.Secret(2)}
+	// Distinct, clearly-marked fake values so this stays stdlib-only and does
+	// not trip secret scanning.
+	u1 := User{Name: "Alice", password: "test-secret-value-1"}
+	u2 := User{Name: "Alice", password: "test-secret-value-2"}
 
 	if !comp.Equal(u1, u2) {
 		t.Error("Expected structs to be equal when ignoring unexported fields")
@@ -1169,8 +1164,7 @@ func BenchmarkEqual_DeepNested(b *testing.B) {
 	l1 := Level1{L2: Level2{L3: Level3{L4: Level4{Value: 42}}}}
 	l2 := Level1{L2: Level2{L3: Level3{L4: Level4{Value: 42}}}}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		comp.Equal(l1, l2)
 	}
 }
@@ -1184,8 +1178,7 @@ func BenchmarkEqual_LargeSlice(b *testing.B) {
 		s2[i] = i
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		comp.Equal(s1, s2)
 	}
 }
@@ -2016,8 +2009,7 @@ func BenchmarkEqual_LargeMap(b *testing.B) {
 		m2[key] = i
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		comp.Equal(m1, m2)
 	}
 }
